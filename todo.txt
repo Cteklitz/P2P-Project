@@ -1,0 +1,10 @@
+- basic p2p messaging of strings
+- load from PeerInfo.cfg and send handshake msgs
+- load Common.cfg
+- own bitfield
+- peer bitfields/have msgs
+- interested/not interested msgs
+- request msgs
+- piece msgs
+- choke/unchoke
+- 
