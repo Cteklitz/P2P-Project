@@ -1,8 +1,36 @@
 import getopt
 import sys
 import socket
+import configparser
+
+class Peer:
+    def __init__ (self, id, ip, port, has_file):
+        self.id = id
+        self.ip = ip
+        self.port = port
+        self.has_file = has_file
+
+
+def parsePeerInfo(): # returns an array of Peer object containing the data from PeerInfo.cfg
+    cfg = open("PeerInfo.cfg", "r")
+    lines = cfg.readlines()
+
+    peers = []
+
+    for line in lines:
+        temp_peer = line.split(' ')
+        peers.append(Peer(int(temp_peer[0]),
+                          str(temp_peer[1]),
+                          int(temp_peer[2]),
+                          bool(temp_peer[3])))
+        
+    return peers
+
 
 def main():    
+    # parse peers.cfg
+    peers = parsePeerInfo()
+    print(peers[1].has_file)
     # get port from cli arg
     if len(sys.argv) < 2:
         print("Error: No peer id provided")
@@ -35,7 +63,7 @@ def main():
         c.close()
     else:
         s.connect(('127.0.0.1', port))
-        
+
         # receive data from the server and decoding to get the string.
         print (s.recv(1024).decode())
         # close the connection 
