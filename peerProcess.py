@@ -1,7 +1,10 @@
 import getopt
 import sys
 import socket
-import configparser
+import threading
+
+peers = []
+peer_id = 0
 
 class Peer:
     def __init__ (self, id, ip, port, has_file):
@@ -9,7 +12,7 @@ class Peer:
         self.ip = ip
         self.port = port
         self.has_file = has_file
-
+        self.connection = socket.socket()
 
 def parsePeerInfo(): # returns an array of Peer object containing the data from PeerInfo.cfg
     cfg = open("PeerInfo.cfg", "r")
@@ -26,8 +29,48 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
         
     return peers
 
+def listen(_port):
+    # create socket
+    try: 
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+        print ("Socket successfully created")
+    except socket.error as err: 
+        print ("socket creation failed with error %s" %(err))
+
+    port = _port
+
+    s.bind(('', port))
+    s.listen(5) 
+    if True:
+        c, addr = s.accept()
+        print ('Got connection from', addr )
+
+        # handle handshake to get peer_id of other peer
+        connection_peer_id = 1002
+
+        for peer in peers:
+            if peer.id == connection_peer_id:
+                peer.connection = c
+        # start main sharing thread  
+
+def connect(_peer_id):
+    # create socket
+    try: 
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+        print ("Socket successfully created")
+    except socket.error as err: 
+        print ("socket creation failed with error %s" %(err))
+
+    index = -1
+    for i in range(len(peers)):
+        if peers[i].id == _peer_id:
+            index = i     
+
+    s.connect((peers[index].ip, peers[index].port))
+    peers[index].connection = s 
 
 def main():    
+    global peers
     # parse peers.cfg
     peers = parsePeerInfo()
     print(peers[1].has_file)
@@ -41,33 +84,23 @@ def main():
 
     peer_id = int(sys.argv[1])
 
-    port = 6001 # TODO: get from PeerInfo.cfg
-
-    # create socket
-    try: 
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        print ("Socket successfully created")
-    except socket.error as err: 
-        print ("socket creation failed with error %s" %(err))
-
-    if peer_id == 1001:
-        s.bind(('', port))
-        s.listen(10)
-        c, addr = s.accept()
-        print ('Got connection from', addr )
-
-        # send a thank you message to the client. encoding to send byte type. 
-        c.send('Thank you for connecting'.encode()) 
+    if peer_id == peers[0].id:
+        listening_thread = threading.Thread(target=listen, args=(peers[0].port,))
+        listening_thread.start()
+        listening_thread.join()
+        peers[1].connection.send('Thank you for connecting'.encode()) 
 
         # Close the connection with the client 
-        c.close()
+        peers[1].connection.close()
     else:
-        s.connect(('127.0.0.1', port))
+        connect_thread = threading.Thread(target=connect, args=(peers[0].id,))
+        connect_thread.start()
+        connect_thread.join()
 
         # receive data from the server and decoding to get the string.
-        print (s.recv(1024).decode())
+        print (peers[0].connection.recv(1024).decode())
         # close the connection 
-        s.close() 
+        peers[0].connection.close() 
         
 
 if __name__ == "__main__":
