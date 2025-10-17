@@ -69,6 +69,11 @@ def connect(_peer_id):
     s.connect((peers[index].ip, peers[index].port))
     peers[index].connection = s 
 
+    # handle handshake
+
+# TODO: Handle handshake function
+# TODO: Main sharing function (for thread)
+
 def main():    
     global peers
     # parse peers.cfg
