@@ -44,13 +44,16 @@ def listen(_port):
     if True:
         c, addr = s.accept()
         print ('Got connection from', addr )
+        handshake_thread = threading.Thread(target=handshake, args=(c,))
+        handshake_thread.start()
+        handshake_thread.join()
 
         # handle handshake to get peer_id of other peer
-        connection_peer_id = 1002
+        #connection_peer_id = 1002
 
-        for peer in peers:
-            if peer.id == connection_peer_id:
-                peer.connection = c
+        #for peer in peers:
+            #if peer.id == connection_peer_id:
+                #peer.connection = c
         # start main sharing thread  
 
 def connect(_peer_id):
@@ -67,12 +70,23 @@ def connect(_peer_id):
             index = i     
 
     s.connect((peers[index].ip, peers[index].port))
-    peers[index].connection = s 
+    handshake_thread = threading.Thread(target=handshake, args=(s,))
+    handshake_thread.start()
+    handshake_thread.join()
+    #peers[index].connection = s 
 
     # handle handshake
 
 # TODO: Handle handshake function
 # TODO: Main sharing function (for thread)
+
+def handshake(socket):
+    print(socket)
+    # send handshake msg
+
+    # listen for handshake msg
+
+    # start main thread
 
 def main():    
     global peers
@@ -93,19 +107,12 @@ def main():
         listening_thread = threading.Thread(target=listen, args=(peers[0].port,))
         listening_thread.start()
         listening_thread.join()
-        peers[1].connection.send('Thank you for connecting'.encode()) 
 
-        # Close the connection with the client 
-        peers[1].connection.close()
     else:
         connect_thread = threading.Thread(target=connect, args=(peers[0].id,))
         connect_thread.start()
         connect_thread.join()
 
-        # receive data from the server and decoding to get the string.
-        print (peers[0].connection.recv(1024).decode())
-        # close the connection 
-        peers[0].connection.close() 
         
 
 if __name__ == "__main__":
