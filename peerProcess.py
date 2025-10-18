@@ -8,7 +8,7 @@ peers = []
 peer_id = 0
 
 def log(message):
-    file.write(f"[{time.ctime()}]: {message}\n")
+    file.write(f"{time.ctime()}: {message}\n")
 
 class Peer:
     def __init__ (self, id, ip, port, has_file):
@@ -37,7 +37,6 @@ def listen(_port):
     # create socket
     try: 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        print ("Socket successfully created")
     except socket.error as err: 
         print ("socket creation failed with error %s" %(err))
 
@@ -47,8 +46,7 @@ def listen(_port):
     s.listen(5) 
     if True:
         c, addr = s.accept()
-        print ('Got connection from', addr )
-        handshake_thread = threading.Thread(target=handshake, args=(c,))
+        handshake_thread = threading.Thread(target=handshake, args=(c, False))
         handshake_thread.start()
         handshake_thread.join()
 
@@ -64,7 +62,6 @@ def connect(_peer_id):
     # create socket
     try: 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        print ("Socket successfully created")
     except socket.error as err: 
         print ("socket creation failed with error %s" %(err))
 
@@ -74,7 +71,7 @@ def connect(_peer_id):
             index = i     
 
     s.connect((peers[index].ip, peers[index].port))
-    handshake_thread = threading.Thread(target=handshake, args=(s,))
+    handshake_thread = threading.Thread(target=handshake, args=(s, True))
     handshake_thread.start()
     handshake_thread.join()
     #peers[index].connection = s 
@@ -84,15 +81,21 @@ def connect(_peer_id):
 # TODO: Handle handshake function
 # TODO: Main sharing function (for thread)
 
-def handshake(socket):
-    print(socket)
+def handshake(socket, source): # source is a boolean, True if the connection was started from this peer, False if it came from another peer
     # send handshake msg
     handshake_msg_out = ("P2PFILESHARINGPROJ0000000000" + (str(peer_id)))
-    log(handshake_msg_out)
     socket.send(handshake_msg_out.encode())
     # listen for handshake msg
     handshake_msg_in = socket.recv(32).decode()
-    log(handshake_msg_in)
+
+    connected_peer_id = int(handshake_msg_in[28:32])
+
+
+    if (source):
+        log(f"Peer {peer_id} makes a connection to Peer {connected_peer_id}.")
+    else:
+        log(f"Peer {peer_id} is connected from Peer {connected_peer_id}.")
+
     socket.close()
 
     # start main thread
@@ -101,7 +104,6 @@ def main():
     global peers, peer_id, file
     # parse peers.cfg
     peers = parsePeerInfo()
-    print(peers[1].has_file)
     # get port from cli arg
     if len(sys.argv) < 2:
         print("Error: No peer id provided")
