@@ -99,7 +99,19 @@ def handshake(socket, source): # source is a boolean, True if the connection was
     socket.close() # temporary
 
 def main():    
-    global peers, peer_id, file
+    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size
+
+    # parse config.cfg
+    cfg = open("Common.cfg", "r")
+    lines = cfg.readlines()
+    num_pref_neighbors = int(lines[0].split(' ')[1])
+    unchoking_interval = int(lines[1].split(' ')[1])
+    optimistic_unchoking_interval = int(lines[2].split(' ')[1])
+    file_name = lines[3].split(' ')[1]
+    file_size = int(lines[4].split(' ')[1])
+    piece_size = int(lines[5].split(' ')[1])
+    cfg.close()
+
     # parse peers.cfg
     peers = parsePeerInfo()
     # get port from cli arg
@@ -112,6 +124,8 @@ def main():
 
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
+
+    # setup bit fields
 
     # start listening for connections
     listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
