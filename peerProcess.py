@@ -8,7 +8,7 @@ peers = []
 peer_id = 0
 
 def log(message):
-    file.write(f"[{time.time()}]: {message}\n")
+    file.write(f"[{time.ctime()}]: {message}\n")
 
 class Peer:
     def __init__ (self, id, ip, port, has_file):
