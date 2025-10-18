@@ -2,9 +2,13 @@ import getopt
 import sys
 import socket
 import threading
+import time
 
 peers = []
 peer_id = 0
+
+def log(message):
+    file.write(f"[{time.time()}]: {message}\n")
 
 class Peer:
     def __init__ (self, id, ip, port, has_file):
@@ -83,13 +87,18 @@ def connect(_peer_id):
 def handshake(socket):
     print(socket)
     # send handshake msg
-
+    handshake_msg_out = ("P2PFILESHARINGPROJ0000000000" + (str(peer_id)))
+    log(handshake_msg_out)
+    socket.send(handshake_msg_out.encode())
     # listen for handshake msg
+    handshake_msg_in = socket.recv(32).decode()
+    log(handshake_msg_in)
+    socket.close()
 
     # start main thread
 
 def main():    
-    global peers
+    global peers, peer_id, file
     # parse peers.cfg
     peers = parsePeerInfo()
     print(peers[1].has_file)
@@ -102,6 +111,7 @@ def main():
         sys.exit()    
 
     peer_id = int(sys.argv[1])
+    file = open(f"log_peer_{peer_id}.log", "w")
 
     if peer_id == peers[0].id:
         listening_thread = threading.Thread(target=listen, args=(peers[0].port,))
