@@ -33,6 +33,11 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
         
     return peers
 
+def getPeer(_id): # gets Peer from array based on id
+    for peer in peers:
+            if peer.id == _id:
+                return peer
+
 def listen(_port):
     # create socket
     try: 
@@ -40,23 +45,21 @@ def listen(_port):
     except socket.error as err: 
         print ("socket creation failed with error %s" %(err))
 
+    s.settimeout(1.0)
+    timeouts = 0
+
     port = _port
 
     s.bind(('', port))
     s.listen(5) 
-    if True:
-        c, addr = s.accept()
-        handshake_thread = threading.Thread(target=handshake, args=(c, False))
-        handshake_thread.start()
-        handshake_thread.join()
-
-        # handle handshake to get peer_id of other peer
-        #connection_peer_id = 1002
-
-        #for peer in peers:
-            #if peer.id == connection_peer_id:
-                #peer.connection = c
-        # start main sharing thread  
+    while timeouts < 15: # change to end loop once all peers are connected eventually, based on timeout for testing
+        try:
+            c, addr = s.accept()
+            handshake_thread = threading.Thread(target=handshake, args=(c, False))
+            handshake_thread.start()
+            handshake_thread.join()
+        except socket.timeout:
+            timeouts += 1
 
 def connect(_peer_id):
     # create socket
@@ -65,20 +68,13 @@ def connect(_peer_id):
     except socket.error as err: 
         print ("socket creation failed with error %s" %(err))
 
-    index = -1
-    for i in range(len(peers)):
-        if peers[i].id == _peer_id:
-            index = i     
+    peer = getPeer(_peer_id)   
 
-    s.connect((peers[index].ip, peers[index].port))
+    s.connect((peer.ip, peer.port))
     handshake_thread = threading.Thread(target=handshake, args=(s, True))
     handshake_thread.start()
     handshake_thread.join()
-    #peers[index].connection = s 
 
-    # handle handshake
-
-# TODO: Handle handshake function
 # TODO: Main sharing function (for thread)
 
 def handshake(socket, source): # source is a boolean, True if the connection was started from this peer, False if it came from another peer
@@ -88,17 +84,17 @@ def handshake(socket, source): # source is a boolean, True if the connection was
     # listen for handshake msg
     handshake_msg_in = socket.recv(32).decode()
 
-    connected_peer_id = int(handshake_msg_in[28:32])
-
+    connected_peer_id = int(handshake_msg_in[28:32]) # get the peer id from the handshake msg
+    connected_peer = getPeer(connected_peer_id)
+    connected_peer.connection = socket # add the socket to the peer array
 
     if (source):
         log(f"Peer {peer_id} makes a connection to Peer {connected_peer_id}.")
     else:
         log(f"Peer {peer_id} is connected from Peer {connected_peer_id}.")
 
-    socket.close()
-
     # start main thread
+    socket.close() # temporary
 
 def main():    
     global peers, peer_id, file
@@ -115,17 +111,14 @@ def main():
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
 
-    if peer_id == peers[0].id:
-        listening_thread = threading.Thread(target=listen, args=(peers[0].port,))
-        listening_thread.start()
-        listening_thread.join()
+    listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
+    listening_thread.start()
 
-    else:
-        connect_thread = threading.Thread(target=connect, args=(peers[0].id,))
+    for peer in peers:
+        if peer.id == peer_id: # leave loop once self is reached in list (only connect to peers prior to self)
+            break
+        connect_thread = threading.Thread(target=connect, args=(peer.id,))
         connect_thread.start()
-        connect_thread.join()
-
-        
-
+    
 if __name__ == "__main__":
     main()
