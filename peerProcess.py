@@ -55,9 +55,10 @@ def listen(_port):
     while timeouts < 15: # change to end loop once all peers are connected eventually, based on timeout for testing
         try:
             c, addr = s.accept()
-            handshake_thread = threading.Thread(target=handshake, args=(c, False))
-            handshake_thread.start()
-            handshake_thread.join()
+            #handshake_thread = threading.Thread(target=handshake, args=(c, False))
+            #handshake_thread.start()
+            #handshake_thread.join()
+            handshake(c, False)
         except socket.timeout:
             timeouts += 1
 
@@ -71,9 +72,10 @@ def connect(_peer_id):
     peer = getPeer(_peer_id)   
 
     s.connect((peer.ip, peer.port))
-    handshake_thread = threading.Thread(target=handshake, args=(s, True))
-    handshake_thread.start()
-    handshake_thread.join()
+    #handshake_thread = threading.Thread(target=handshake, args=(s, True))
+    #handshake_thread.start()
+    #handshake_thread.join()
+    handshake(s, True)
 
 # TODO: Main sharing function (for thread)
 
@@ -111,14 +113,18 @@ def main():
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
 
+    # start listening for connections
     listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
     listening_thread.start()
 
+    connect_threads = []
+    # attempt to connect to all peers lower in the list
     for peer in peers:
         if peer.id == peer_id: # leave loop once self is reached in list (only connect to peers prior to self)
             break
-        connect_thread = threading.Thread(target=connect, args=(peer.id,))
-        connect_thread.start()
+        connect_threads.append(threading.Thread(target=connect, args=(peer.id,)))
+        connect_threads[len(connect_threads) - 1].start()
+    
     
 if __name__ == "__main__":
     main()
