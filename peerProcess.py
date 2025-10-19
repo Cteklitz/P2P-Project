@@ -42,6 +42,30 @@ def getOptimistic(): # returns the current optimistic unchoked peer, None if the
             return peer
     return None
 
+def encodeBitfield(bitfield): # retuns a string represnting the input bitfield
+    binary = ""
+    for bit in bitfield:
+        if bit:
+            binary += "1"
+        else:
+            binary += "0"
+    while len(binary) % 8 != 0: # add 0's to fill last byte
+        binary += "0"
+
+    string = ''.join(chr(int(binary[i:i+8], 2)) for i in range(0, len(binary), 8)) # convert binary to string, from: https://www.geeksforgeeks.org/python/convert-binary-to-string-using-python/      
+    return string
+
+def decodeBitfield(string): # returns a bitfield array for input bitfield string
+    binary = ''.join(format(ord(char), '08b') for char in string) # convert string to binary, from: https://www.geeksforgeeks.org/python/python-convert-string-to-binary/
+    bitfield = []
+    for i in range(len(self.bitfield)):
+        if binary[i] == '1':
+            bitfield.append(True)
+        else:
+            bitfield.append(False)
+    return bitfield
+    
+
 def parsePeerInfo(): # returns an array of Peer object containing the data from PeerInfo.cfg
     cfg = open("PeerInfo.cfg", "r")
     lines = cfg.readlines()
@@ -52,7 +76,7 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
         temp_peer = line.split(' ')
         temp_bitfield = []
         # initalize bitfield based on if peer has file or not
-        if temp_peer[3]:
+        if temp_peer[3] == "1":
             temp_bitfield = [True] * int(file_size / piece_size)
         else:
             temp_bitfield = [False] * int(file_size / piece_size)
@@ -140,6 +164,7 @@ def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
 
     # send bitfield msg
+    bitfield_string = bitfieldToString(self.bitfield)
 
     # receive bit field msg
     
