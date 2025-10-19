@@ -155,6 +155,7 @@ def listen(_port):
     s.bind(('', port))
     s.listen(5) 
     while timeouts < 15: # change to end loop once all peers are connected eventually, based on timeout for testing
+        #print(timeouts)
         try:
             c, addr = s.accept()
             #handshake_thread = threading.Thread(target=handshake, args=(c, False))
@@ -250,7 +251,11 @@ def sending(_peer_id): # loop to send msgs to a peer
             # send interested msg
             msg = "00012"
             s.send(msg.encode())
-            time.sleep(2)
+            time.sleep(1)
+        elif not checkBitField(connected_peer.bitfield) and connected_peer.unchoked:
+            msg = "00013"
+            s.send(msg.encode())
+            time.sleep(1)
 
         if connected_peer.preferred or connected_peer.optimistic:
             if connected_peer.requested != -1:
@@ -265,7 +270,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
     connected_peer = getPeer(_peer_id)
     s = connected_peer.connection
 
-    s.settimeout(10.0)
+    s.settimeout(2.5)
     timeouts = 0
 
     while timeouts < 15: # change to end loop once all peers are connected eventually, based on timeout for testing
