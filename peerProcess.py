@@ -11,12 +11,13 @@ def log(message):
     file.write(f"{time.ctime()}: {message}\n")
 
 class Peer:
-    def __init__ (self, id, ip, port, has_file):
+    def __init__ (self, id, ip, port, has_file, bitfield):
         self.id = id
         self.ip = ip
         self.port = port
         self.has_file = has_file
         self.connection = socket.socket()
+        self.bitfield = bitfield
 
 def parsePeerInfo(): # returns an array of Peer object containing the data from PeerInfo.cfg
     cfg = open("PeerInfo.cfg", "r")
@@ -26,10 +27,18 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
 
     for line in lines:
         temp_peer = line.split(' ')
+        temp_bitfield = []
+        # initalize bitfield based on if peer has file or not
+        if temp_peer[3]:
+            temp_bitfield = [True] * int(file_size / piece_size)
+        else:
+            temp_bitfield = [False] * int(file_size / piece_size)
+            
         peers.append(Peer(int(temp_peer[0]),
                           str(temp_peer[1]),
                           int(temp_peer[2]),
-                          bool(temp_peer[3])))
+                          bool(temp_peer[3]),
+                          temp_bitfield))
         
     return peers
 
@@ -124,8 +133,6 @@ def main():
 
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
-
-    # setup bit fields
 
     # start listening for connections
     listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
