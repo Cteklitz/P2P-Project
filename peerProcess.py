@@ -95,6 +95,11 @@ def handshake(socket, source): # source is a boolean, True if the connection was
     # listen for handshake msg
     handshake_msg_in = socket.recv(32).decode()
 
+    handshake_header = handshake_msg_in[0:28]
+    if handshake_header != "P2PFILESHARINGPROJ0000000000":
+        print("Error: Handshake header invalid")
+        return
+    
     connected_peer_id = int(handshake_msg_in[28:32]) # get the peer id from the handshake msg
     connected_peer = getPeer(connected_peer_id)
     connected_peer.connection = socket # add the socket to the peer array
@@ -105,10 +110,17 @@ def handshake(socket, source): # source is a boolean, True if the connection was
         log(f"Peer {peer_id} is connected from Peer {connected_peer_id}.")
 
     # start main thread
-    socket.close() # temporary
+    thread = threading.Thread(target=connection, args=(connected_peer_id,))
+    thread.start()
+   
+def connection(_peer_id):
+    connected_peer = getPeer(_peer_id)
+    
+    connected_peer.connection.close() # temporary
+
 
 def main():    
-    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size
+    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size, self
 
     # parse config.cfg
     cfg = open("Common.cfg", "r")
@@ -133,6 +145,8 @@ def main():
 
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
+
+    self = getPeer(peer_id)
 
     # start listening for connections
     listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
