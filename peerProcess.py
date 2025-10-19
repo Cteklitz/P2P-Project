@@ -17,7 +17,30 @@ class Peer:
         self.port = port
         self.has_file = has_file
         self.connection = socket.socket()
-        self.bitfield = bitfield
+        self.bitfield = bitfield # this peers bitfield
+        self.preferred = False # whether this peer is a preferred neightbor
+        self.optimistic = False # whether this peer is the optimistically unchoked neighbor
+        # TODO: add fields for data rate from peer
+
+def getPrefCount(): # returns the amount of neighbors currently prefered
+    count = 0
+    for peer in peers:
+        if peer.preferred:
+            count += 1
+    return count
+
+def getPrefNeighbors(): # returns an array of the current prefered neighbors
+    out = []
+    for peer in peers:
+        if peer.preferred:
+            out.append(peer)
+    return out
+
+def getOptimistic(): # returns the current optimistic unchoked peer, None if there is not one currently
+    for peer in peers:
+        if peer.optimistic:
+            return peer
+    return None
 
 def parsePeerInfo(): # returns an array of Peer object containing the data from PeerInfo.cfg
     cfg = open("PeerInfo.cfg", "r")
@@ -115,6 +138,10 @@ def handshake(socket, source): # source is a boolean, True if the connection was
    
 def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
+
+    # send bitfield msg
+
+    # receive bit field msg
     
     connected_peer.connection.close() # temporary
 
