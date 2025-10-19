@@ -42,7 +42,7 @@ def getOptimistic(): # returns the current optimistic unchoked peer, None if the
             return peer
     return None
 
-def encodeBitfield(bitfield): # retuns a string represnting the input bitfield
+def encodeBitfield(bitfield): # retuns a hex string represnting the input bitfield
     binary = ""
     for bit in bitfield:
         if bit:
@@ -52,11 +52,16 @@ def encodeBitfield(bitfield): # retuns a string represnting the input bitfield
     while len(binary) % 8 != 0: # add 0's to fill last byte
         binary += "0"
 
-    string = ''.join(chr(int(binary[i:i+8], 2)) for i in range(0, len(binary), 8)) # convert binary to string, from: https://www.geeksforgeeks.org/python/convert-binary-to-string-using-python/      
-    return string
+    hex_value = hex(int(binary, 2))[2:]
+    required_hex_digits = len(binary) // 4
+    hex_string = hex_value.zfill(required_hex_digits)
+    return hex_string
 
-def decodeBitfield(string): # returns a bitfield array for input bitfield string
-    binary = ''.join(format(ord(char), '08b') for char in string) # convert string to binary, from: https://www.geeksforgeeks.org/python/python-convert-string-to-binary/
+def decodeBitfield(string): # returns a bitfield array for input bitfield hex string
+    binary = bin(int(string, 16))[2:]
+    required_binary_digits = len(string) * 4
+    binary = binary.zfill(required_binary_digits)
+
     bitfield = []
     for i in range(len(self.bitfield)):
         if binary[i] == '1':
@@ -164,11 +169,33 @@ def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
 
     # send bitfield msg
-    bitfield_string = bitfieldToString(self.bitfield)
+    bitfield_string = encodeBitfield(self.bitfield)
+    bitfield_msg_len = (len(bitfield_string) + 1) # maybe this should be sent in hex instead of dec? idk going to use dec for now bc its easier
+    bitfield_msg = str(bitfield_msg_len)
+    while(len(bitfield_msg) < 4): # append 0s to start 
+        bitfield_msg = "0" + bitfield_msg
+    bitfield_msg += "5"
+    bitfield_msg += bitfield_string
+    #print(len(bitfield_msg.encode()))
+
+    connected_peer.connection.send(bitfield_msg.encode())
 
     # receive bit field msg
+    t, bitfield_string = reciveMessage(connected_peer.connection)
+    if t != 5:
+        print(f"Error: expected msg type 5, received: {t}")
+        return
+    connected_peer.bitfield = decodeBitfield(bitfield_string)
     
     connected_peer.connection.close() # temporary
+
+def reciveMessage(socket): # recives a msg, returns a tuple of the type and payload
+    msg_len = socket.recv(4).decode() # get msg len
+    length = int(msg_len)
+    msg = socket.recv(length).decode() # get msg
+    type = int(msg[0])
+    payload = msg[1:]
+    return (type,payload)
 
 
 def main():    
