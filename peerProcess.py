@@ -119,16 +119,18 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
     for line in lines:
         temp_peer = line.split(' ')
         temp_bitfield = []
+        has = False
         # initalize bitfield based on if peer has file or not
         if temp_peer[3] == "1":
             temp_bitfield = [True] * int(file_size / piece_size)
+            has = True
         else:
             temp_bitfield = [False] * int(file_size / piece_size)
             
         peers.append(Peer(int(temp_peer[0]),
                           str(temp_peer[1]),
                           int(temp_peer[2]),
-                          bool(temp_peer[3]),
+                          has,
                           temp_bitfield))
         
     return peers
@@ -236,13 +238,13 @@ def sending(_peer_id): # loop to send msgs to a peer
     s = connected_peer.connection
     s.settimeout(10.0)
     while True: # change to be while this peer does not have full file
-        #print(f"{connected_peer.id}: {connected_peer.unchoked}")
+        #print(f"{connected_peer.id}: {connected_peer.unchoked}")       
         if connected_peer.unchoked and not connected_peer.outstanding_request and not self.has_file:
             # send request msg
             connected_peer.outstanding_request = True
             index = getRandomNeededIndex()
             msg = "00056" + intToHex(index, 4)
-            #print(f"requesting: {index}")
+            print(f"requesting: {index}")
             s.send(msg.encode())           
         elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not self.has_file:
             # send interested msg
@@ -253,7 +255,7 @@ def sending(_peer_id): # loop to send msgs to a peer
         if connected_peer.preferred or connected_peer.optimistic:
             if connected_peer.requested != -1:
                 # send piece
-                #print(f"sending: {connected_peer.requested}")
+                print(f"sending: {connected_peer.requested}")
                 msg = "0005" + "7" + intToHex(connected_peer.requested, 4) # TODO: Add data to msg
                 s.send(msg.encode())
                 connected_peer.requested = -1
@@ -288,7 +290,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                         log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
             elif t == 6: # request
                 connected_peer.requested = int(payload, 16)
-                #print(f"recived request: {connected_peer.requested}")
+                print(f"recived request: {connected_peer.requested}")
             elif t == 7: # piece
                 index = int(payload[0:4], 16)
                 self.bitfield[index] = True
