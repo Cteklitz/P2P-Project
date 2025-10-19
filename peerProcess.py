@@ -138,8 +138,6 @@ def connect(_peer_id):
     #handshake_thread.join()
     handshake(s, True)
 
-# TODO: Main sharing function (for thread)
-
 def handshake(socket, source): # source is a boolean, True if the connection was started from this peer, False if it came from another peer
     # send handshake msg
     handshake_msg_out = ("P2PFILESHARINGPROJ0000000000" + (str(peer_id)))
@@ -170,13 +168,12 @@ def connection(_peer_id):
 
     # send bitfield msg
     bitfield_string = encodeBitfield(self.bitfield)
-    bitfield_msg_len = (len(bitfield_string) + 1) # maybe this should be sent in hex instead of dec? idk going to use dec for now bc its easier
+    bitfield_msg_len = (hex(len(bitfield_string) + 1))
+    bitfield_msg_len = bitfield_msg_len.zfill(4) # pad msg with 0s 
     bitfield_msg = str(bitfield_msg_len)
-    while(len(bitfield_msg) < 4): # append 0s to start 
-        bitfield_msg = "0" + bitfield_msg
+
     bitfield_msg += "5"
     bitfield_msg += bitfield_string
-    #print(len(bitfield_msg.encode()))
 
     connected_peer.connection.send(bitfield_msg.encode())
 
@@ -191,7 +188,7 @@ def connection(_peer_id):
 
 def reciveMessage(socket): # recives a msg, returns a tuple of the type and payload
     msg_len = socket.recv(4).decode() # get msg len
-    length = int(msg_len)
+    length = int(msg_len, 16)
     msg = socket.recv(length).decode() # get msg
     type = int(msg[0])
     payload = msg[1:]
