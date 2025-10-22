@@ -23,7 +23,7 @@ class Peer:
         self.ip = ip
         self.port = port
         self.has_file = has_file
-        self.connections = []
+        self.connections = {}
         self.bitfield = bitfield # this peers bitfield
         self.preferred = False # whether this peer is a preferred neightbor
         self.optimistic = False # whether this peer is the optimistically unchoked neighbor
@@ -164,13 +164,25 @@ def listen(_port):
         return 0
     s.bind(('', _port))
     s.listen(5)
+    s.settimeout(1)  # Check condition every second
     print(f"Listening on port {_port}...")
     recievepeer = getPeerByPort(_port)
-    while listenforpeers:
-        c, addr = s.accept()
+    while True:
+        if len(recievepeer.connections) >= len(peers) - 1:
+            print(f"All expected connections reached for peer {recievepeer.id}.")
+            break
+
+        try:
+            c, addr = s.accept()
+        except socket.timeout:
+            continue  # No new connection, check condition again
+        except OSError:
+            # Socket was closed while waiting — exit cleanly
+            break
         print(f"Incoming connection from {addr}")
         #recievepeer.connections.append(c)
         threading.Thread(target=handshake, args=(c, False, recievepeer.id)).start()
+        print("connections: ", len(recievepeer.connections), " , expected connections: ", len(peers) - 1)
 
     print("stopping listen for peer ", peer_id)
 
@@ -227,7 +239,8 @@ def handshake(socket, source, peerid): # source is a boolean, True if the connec
 
         # Set connection
     connected_peer = getPeer(peerid)
-    connected_peer.connections.append(socket)
+    connected_peer.connections[connected_peer_id] = socket
+    print("Connection to peer ", connected_peer_id, " added.")
 
 def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
@@ -369,37 +382,28 @@ def main():
         sys.exit()    
 
     peer_id = int(sys.argv[1])
-    file = open(f"log_peer_{peer_id}.log", "w")
 
     local_peer = getPeer(peer_id)
 
     # start listening for connections
-    listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
+    print(f"Starting peer {peer_id} on port {local_peer.port}")
+
+    # Connect to peers that appear before this one in PeerInfo.cfg
+    for peer in peers:
+        if peer.id == peer_id:
+            break  # Stop once we reach ourself
+        connect(peer.id, peer_id)
+
+    # Start listening for incoming connections
+    listening_thread = threading.Thread(target=listen, args=(local_peer.port,))
     listening_thread.start()
 
-    listening_threads = []
+    # Wait until all connections are done
+    listening_thread.join()
 
-    for peer in peers:
-        if not peers[0] == peer:
-            for peer2 in peers:
-                if peer != peer2:
-                    connect_thread = threading.Thread(target=connect, args=(peer2.id, peer.id))
-                    connect_thread.start()
-                    connect_thread.join()
-                else:
-                    break
-            listen_thread = threading.Thread(target=listen, args=(peer.port,))
-            listen_thread.start()
-            listening_threads.append(listen_thread)
-
-    #listenforpeers = False
-    #for thread in listening_threads:
-    #    print("Joining listening thread")
-    #    thread.join()
-
-    for connecti in peers[6].connections:
-        print("Connection: ", connecti)
-    print("connections printed")
+    print("Connections summary: ")
+    for pid, sock in local_peer.connections.items():
+        print(f"Connected to peer {pid} via socket {sock}")
 
 
 if __name__ == "__main__":
