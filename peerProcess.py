@@ -2,14 +2,20 @@ import getopt
 import sys
 import socket
 import threading
+from datetime import datetime
 import time
 import random
 
 peers = []
 peer_id = 0
 
-def log(message):
-    file.write(f"{time.ctime()}: {message}\n")
+
+def log(peer, message):
+    now = datetime.now()
+    formatted = now.strftime("%Y-%m-%d %H:%M:%S")
+    peer.log_file.write(f"{formatted}: {message}\n")
+    peer.log_file.flush()
+
 
 class Peer:
     def __init__ (self, id, ip, port, has_file, bitfield):
@@ -17,13 +23,14 @@ class Peer:
         self.ip = ip
         self.port = port
         self.has_file = has_file
-        self.connection = socket.socket()
+        self.connections = []
         self.bitfield = bitfield # this peers bitfield
         self.preferred = False # whether this peer is a preferred neightbor
         self.optimistic = False # whether this peer is the optimistically unchoked neighbor
         self.unchoked = False # whether this peer has unchoked self (is this peer sending us data)
         self.outstanding_request = False # whether there is a current request that has not been replied to
         self.requested = -1 # the currently requested piece, -1 if none
+        self.log_file = open(f"log_peer_{id}.log", "w")
         # TODO: add fields for data rate from peer
 
 def getPrefCount(): # returns the amount of neighbors currently prefered
@@ -76,7 +83,7 @@ def decodeBitfield(string): # returns a bitfield array for input bitfield hex st
     binary = binary.zfill(required_binary_digits)
 
     bitfield = []
-    for i in range(len(self.bitfield)):
+    for i in range(len(local_peer.bitfield)):
         if binary[i] == '1':
             bitfield.append(True)
         else:
@@ -92,8 +99,8 @@ def bitfieldHasCount(bitfield): # returns the amount of pieces present in a bitf
 
 def getRandomNeededIndex(): # returns the index of a random bit self needs
     needed = []
-    for i in range(len(self.bitfield)):
-        if not self.bitfield[i]:
+    for i in range(len(local_peer.bitfield)):
+        if not local_peer.bitfield[i]:
             needed.append(i)
     rand = random.randint(0, len(needed) - 1)
     return needed[rand]
@@ -101,7 +108,7 @@ def getRandomNeededIndex(): # returns the index of a random bit self needs
 
 def checkBitField(bitfield): # returns True if the input bitfield has any pieces that self does not have, False otherwise
     for i in range(len(bitfield)):
-        if not self.bitfield[i] and bitfield[i]:
+        if not local_peer.bitfield[i] and bitfield[i]:
             return True
     return False
 
@@ -140,76 +147,93 @@ def getPeer(_id): # gets Peer from array based on id
             if peer.id == _id:
                 return peer
 
+
+def getPeerByPort(_port):
+    for peer in peers:
+        if peer.port == _port:
+            return peer
+
+
 def listen(_port):
     # create socket
-    try: 
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-    except socket.error as err: 
-        print ("socket creation failed with error %s" %(err))
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        print("Socket created on port: ", _port)
+    except socket.error as err:
+        print("socket creation failed with error %s" % (err))
+        return 0
+    s.bind(('', _port))
+    s.listen(5)
+    print(f"Listening on port {_port}...")
+    recievepeer = getPeerByPort(_port)
+    while listenforpeers:
+        c, addr = s.accept()
+        print(f"Incoming connection from {addr}")
+        #recievepeer.connections.append(c)
+        threading.Thread(target=handshake, args=(c, False, recievepeer.id)).start()
 
-    s.settimeout(1.0)
-    timeouts = 0
+    print("stopping listen for peer ", peer_id)
 
-    port = _port
 
-    s.bind(('', port))
-    s.listen(5) 
-    while timeouts < 15: # change to end loop once all peers are connected eventually, based on timeout for testing
-        #print(timeouts)
-        try:
-            c, addr = s.accept()
-            #handshake_thread = threading.Thread(target=handshake, args=(c, False))
-            #handshake_thread.start()
-            #handshake_thread.join()
-            handshake(c, False)
-        except socket.timeout:
-            timeouts += 1
-
-def connect(_peer_id):
+def connect(_topeer_id, _frompeer_id):
     # create socket
-    try: 
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-    except socket.error as err: 
-        print ("socket creation failed with error %s" %(err))
+    topeer = getPeer(_topeer_id)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except socket.error as err:
+        print("socket creation failed with error %s" % (err))
+    s.connect((topeer.ip, topeer.port))
+    print(f"Connected to peer {_topeer_id} at {topeer.ip}:{topeer.port}")
+    handshake(s, True, _frompeer_id)
 
-    peer = getPeer(_peer_id)   
 
-    s.connect((peer.ip, peer.port))
-    #handshake_thread = threading.Thread(target=handshake, args=(s, True))
-    #handshake_thread.start()
-    #handshake_thread.join()
-    handshake(s, True)
-
-def handshake(socket, source): # source is a boolean, True if the connection was started from this peer, False if it came from another peer
+def handshake(socket, source, peerid): # source is a boolean, True if the connection was started from this peer, False if it came from another peer
     # send handshake msg
-    handshake_msg_out = ("P2PFILESHARINGPROJ0000000000" + (str(peer_id)))
-    socket.send(handshake_msg_out.encode())
-    # listen for handshake msg
-    handshake_msg_in = socket.recv(32).decode()
 
-    handshake_header = handshake_msg_in[0:28]
-    if handshake_header != "P2PFILESHARINGPROJ0000000000":
-        print("Error: Handshake header invalid")
-        return
-    
-    connected_peer_id = int(handshake_msg_in[28:32]) # get the peer id from the handshake msg
-    connected_peer = getPeer(connected_peer_id)
-    connected_peer.connection = socket # add the socket to the peer array
+    if source:  # Active peer
+        # Send handshake first
+        #local_ip, local_port = socket.getsockname()
+        #peerfrom = getPeerByPort(local_port) # peer initiating connection
+        handshake_msg_out = "P2PFILESHARINGPROJ0000000000" + str(peerid)
+        socket.send(handshake_msg_out.encode())
+        print(f"active Sent handshake: {handshake_msg_out}")
 
-    if (source):
-        log(f"Peer {peer_id} makes a connection to Peer {connected_peer_id}.")
-    else:
-        log(f"Peer {peer_id} is connected from Peer {connected_peer_id}.")
+        # Receive handshake reply
+        handshake_msg_in = socket.recv(32).decode()
+        handshake_header = handshake_msg_in[0:28]
+        if handshake_header != "P2PFILESHARINGPROJ0000000000":
+            print("Error: Handshake header invalid")
+            return
+        connected_peer_id = int(handshake_msg_in[28:32])
+        print(f"active Received handshake from peer {connected_peer_id}")
+        log(getPeer(peerid), f"Peer {peerid} is connected to Peer {connected_peer_id}.")
 
-    # start main thread
-    thread = threading.Thread(target=connection, args=(connected_peer_id,))
-    thread.start()
-   
+
+    else:  # Passive peer
+        # Receive handshake first
+        handshake_msg_in = socket.recv(32).decode()
+        handshake_header = handshake_msg_in[0:28]
+        if handshake_header != "P2PFILESHARINGPROJ0000000000":
+            print("Error: Handshake header invalid")
+            return
+        connected_peer_id = int(handshake_msg_in[28:32])
+        print(f"passive Received handshake from peer {connected_peer_id}")
+
+        # Send handshake reply
+        handshake_msg_out = "P2PFILESHARINGPROJ0000000000" + str(peerid)
+        socket.send(handshake_msg_out.encode())
+        print(f"passive Sent handshake reply: {handshake_msg_out}")
+        log(getPeer(peerid), f"Peer {peerid} is connected from Peer {connected_peer_id}")
+
+        # Set connection
+    connected_peer = getPeer(peerid)
+    connected_peer.connections.append(socket)
+
 def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
 
     # send bitfield msg
-    bitfield_string = encodeBitfield(self.bitfield)
+    bitfield_string = encodeBitfield(local_peer.bitfield)
     bitfield_msg_len = intToHex(len(bitfield_string) + 1, 4)
     bitfield_msg = str(bitfield_msg_len)
 
@@ -240,14 +264,14 @@ def sending(_peer_id): # loop to send msgs to a peer
     s.settimeout(10.0)
     while True: # change to be while this peer does not have full file
         #print(f"{connected_peer.id}: {connected_peer.unchoked}")       
-        if connected_peer.unchoked and not connected_peer.outstanding_request and not self.has_file:
+        if connected_peer.unchoked and not connected_peer.outstanding_request and not local_peer.has_file:
             # send request msg
             connected_peer.outstanding_request = True
             index = getRandomNeededIndex()
             msg = "00056" + intToHex(index, 4)
             print(f"requesting: {index}")
             s.send(msg.encode())           
-        elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not self.has_file:
+        elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not local_peer.has_file:
             # send interested msg
             msg = "00012"
             s.send(msg.encode())
@@ -298,11 +322,11 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 print(f"recived request: {connected_peer.requested}")
             elif t == 7: # piece
                 index = int(payload[0:4], 16)
-                self.bitfield[index] = True
-                log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(self.bitfield)}.")
+                local_peer.bitfield[index] = True
+                log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
                 connected_peer.outstanding_request = False
-                if bitfieldHasCount(self.bitfield) == int(file_size/piece_size):
-                    self.has_file = True
+                if bitfieldHasCount(local_peer.bitfield) == int(file_size/piece_size):
+                    local_peer.has_file = True
                     return
                     # TODO: handle stuff for self having full file
                 # TODO: process data, write to file
@@ -321,8 +345,8 @@ def reciveMessage(socket): # recives a msg, returns a tuple of the type and payl
 
 
 def main():    
-    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size, self
-
+    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size, local_peer, listenforpeers
+    listenforpeers = True
     # parse config.cfg
     cfg = open("Common.cfg", "r")
     lines = cfg.readlines()
@@ -347,20 +371,36 @@ def main():
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
 
-    self = getPeer(peer_id)
+    local_peer = getPeer(peer_id)
 
     # start listening for connections
     listening_thread = threading.Thread(target=listen, args=(getPeer(peer_id).port,))
     listening_thread.start()
 
-    connect_threads = []
-    # attempt to connect to all peers lower in the list
+    listening_threads = []
+
     for peer in peers:
-        if peer.id == peer_id: # leave loop once self is reached in list (only connect to peers prior to self)
-            break
-        connect_threads.append(threading.Thread(target=connect, args=(peer.id,)))
-        connect_threads[len(connect_threads) - 1].start()
-    
-    
+        if not peers[0] == peer:
+            for peer2 in peers:
+                if peer != peer2:
+                    connect_thread = threading.Thread(target=connect, args=(peer2.id, peer.id))
+                    connect_thread.start()
+                    connect_thread.join()
+                else:
+                    break
+            listen_thread = threading.Thread(target=listen, args=(peer.port,))
+            listen_thread.start()
+            listening_threads.append(listen_thread)
+
+    #listenforpeers = False
+    #for thread in listening_threads:
+    #    print("Joining listening thread")
+    #    thread.join()
+
+    for connecti in peers[6].connections:
+        print("Connection: ", connecti)
+    print("connections printed")
+
+
 if __name__ == "__main__":
     main()
