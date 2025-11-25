@@ -25,7 +25,7 @@ class Peer:
         self.ip = ip
         self.port = port
         self.has_file = has_file
-        self.connection = socket.socket()
+        self.connection = None
         self.bitfield = bitfield # this peers bitfield
         self.preferred = False # whether this peer is a preferred neightbor
         self.interestedin = False  # whether the local peer is interested in this peer
@@ -266,6 +266,9 @@ def listen(_port):
             timeouts = 0
         except socket.timeout:
             timeouts += 1 # No new connection, check condition again
+        except:
+            print(f"connection from {local_peer.id} to {_port} failed")
+            pass
 
 
 def connect(_peer_id):
@@ -343,6 +346,7 @@ def sending(_peer_id): # loop to send msgs to a peer
 
     while not shutdown_flag.is_set(): # change to be while this peer does not have full file
         #print(f"{connected_peer.id}: {connected_peer.unchoked}")       
+        #print(f"Sending from: {local_peer.id}, to: {connected_peer.id}, bitfield len: {len(connected_peer.bitfield)}, check: {checkBitField(connected_peer.bitfield)}, unchoked: {connected_peer.unchoked}")
         if connected_peer.unchoked and not connected_peer.outstanding_request and not local_peer.has_file:
             # send request msg
             connected_peer.outstanding_request = True
@@ -357,6 +361,7 @@ def sending(_peer_id): # loop to send msgs to a peer
             time.sleep(1)
         elif not checkBitField(connected_peer.bitfield) and connected_peer.unchoked:
             # send not intersetd msg
+            # TODO: Make it so this only sends once
             msg = "00013"
             s.send(msg.encode())
             time.sleep(1)
@@ -412,7 +417,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 else:
                     connected_peer.interestedin = False
             elif t == 5:  # bitfield
-                print("bitfield message, should not receive if not initial connection")
+                print(f"Local: {local_peer.id}, From: {connected_peer.id}; bitfield message, should not receive if not initial connection; {payload}")
                 connected_peer.bitfield = decodeBitfield(payload)
             elif t == 6:  # request
                 connected_peer.requested = int(payload, 16)
@@ -424,13 +429,13 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 connected_peer.outstanding_request = False
 
                 #broadcast 'have' to all peers
-                #for peer in peers:
-                #    if peer.id != peer_id and peer.connection:
-                #        try:
-                #            msg = "00045" + intToHex(index, 4)
-                #            peer.connection.send(msg.encode())
-                #        except Exception as e:
-                #            print(f"Error broadcasting 'have': {e}")
+                for peer in peers:
+                    if peer.id != peer_id and peer.connection is not None:
+                        try:
+                            msg = "00054" + intToHex(index, 4)
+                            peer.connection.send(msg.encode())
+                        except Exception as e:
+                            print(f"Error broadcasting 'have': {e}")
 
                 if bitfieldHasCount(local_peer.bitfield) == int(math.ceil(file_size/piece_size)):
                     local_peer.has_file = True
