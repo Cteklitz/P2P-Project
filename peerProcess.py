@@ -5,6 +5,7 @@ import threading
 from datetime import datetime
 import time
 import random
+import math
 
 peers = []
 peer_id = 0
@@ -15,6 +16,7 @@ def log(message):
     now = datetime.now()
     formatted = now.strftime("%Y-%m-%d %H:%M:%S")
     file.write(f"{formatted}: {message}\n")
+    print(f"{formatted}: {message}")
 
 
 class Peer:
@@ -133,10 +135,10 @@ def parsePeerInfo(): # returns an array of Peer object containing the data from 
         has = False
         # initalize bitfield based on if peer has file or not
         if temp_peer[3] == "1":
-            temp_bitfield = [True] * int(file_size / piece_size)
+            temp_bitfield = [True] * int(math.ceil(file_size/piece_size))
             has = True
         else:
-            temp_bitfield = [False] * int(file_size / piece_size)
+            temp_bitfield = [False] * int(math.ceil(file_size/piece_size))
             
         peers.append(Peer(int(temp_peer[0]),
                           str(temp_peer[1]),
@@ -354,6 +356,7 @@ def sending(_peer_id): # loop to send msgs to a peer
             s.send(msg.encode())
             time.sleep(1)
         elif not checkBitField(connected_peer.bitfield) and connected_peer.unchoked:
+            # send not intersetd msg
             msg = "00013"
             s.send(msg.encode())
             time.sleep(1)
@@ -429,7 +432,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 #        except Exception as e:
                 #            print(f"Error broadcasting 'have': {e}")
 
-                if bitfieldHasCount(local_peer.bitfield) == int(file_size/piece_size):
+                if bitfieldHasCount(local_peer.bitfield) == int(math.ceil(file_size/piece_size)):
                     local_peer.has_file = True
                     log(f"Peer {peer_id} has completed the file.")
                     return
@@ -475,6 +478,7 @@ def main():
     peer_id = int(sys.argv[1])
     file = open(f"log_peer_{peer_id}.log", "w")
     local_peer = getPeer(peer_id)
+    print(f"{len(local_peer.bitfield)}")
 
     # start listening for connections
     print(f"Starting peer {peer_id} on port {local_peer.port}")
