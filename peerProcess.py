@@ -467,9 +467,9 @@ def sending(_peer_id): # loop to send msgs to a peer
                 file.seek(connected_peer.requested * piece_size)
                 data = file.read(piece_size) # read the piece data from the file
 
-                payload = struct.pack(">B", 7)
-                payload += struct.pack(">I", connected_peer.requested) 
-                payload += data
+                payload = struct.pack(">B", 7) # msg type
+                payload += struct.pack(">I", connected_peer.requested)  # index
+                payload += data # data
 
                 length = struct.pack(">I", len(payload))
                 msg = length + payload
@@ -624,11 +624,11 @@ def main():
 
     # prep file
     if not local_peer.has_file: # fill file with 0's if local peer does not have it
-        file = open(f"{peer_id}/{file_name}", "wb+")
+        file = open(f"{peer_id}/{file_name}", "wb+")  # open in write+ mode (creates file if not present/wipes it if it is)
         file.seek(file_size - 1)
         file.write(b"\0")
     else:
-        file = open(f"{peer_id}/{file_name}", "rb+")
+        file = open(f"{peer_id}/{file_name}", "rb+") # open in read+ mode (opens file if present, error if not)
 
     '''
     temp = open("temp", "wb+")
@@ -659,7 +659,7 @@ def main():
     for peer in peers:
         if peer.id == peer_id:
             break  # Stop once we reach ourself
-        connect(peer.id)
+        connect(peer.id) # maybe need to move this to a thread?
 
     # Start listening for incoming connections
     listening_thread = threading.Thread(target=listen, args=(local_peer.port,))
