@@ -451,14 +451,12 @@ def sending(_peer_id): # loop to send msgs to a peer
             msg = struct.pack(">I", 1) 
             msg += struct.pack(">B", 2)
             s.send(msg)
-            time.sleep(1)
         elif (not checkBitField(connected_peer.bitfield) or local_peer.has_file) and connected_peer.interested_in:
             # send not intersetd msg
             connected_peer.interested_in = False
             msg = struct.pack(">I", 1)
             msg += struct.pack(">B", 3)
             s.send(msg)
-            time.sleep(1)
 
         if connected_peer.preferred or connected_peer.optimistic:
             if connected_peer.requested != -1:
