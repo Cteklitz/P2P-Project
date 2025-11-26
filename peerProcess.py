@@ -35,6 +35,7 @@ class Peer:
         self.outstanding_request = False # whether there is a current request that has not been replied to
         self.requested = -1 # the currently requested piece, -1 if none
         self.numconnections = 0
+        self.rate = 0 # the amount of pieces recived from this peer since the last unchoke interval
         # TODO: add fields for data rate from peer
 
 def getPrefCount(): # returns the amount of neighbors currently prefered
@@ -44,11 +45,15 @@ def getPrefCount(): # returns the amount of neighbors currently prefered
             count += 1
     return count
 
-def getPrefNeighbors(): # returns an array of the current prefered neighbors
+def getRate(_peer): # gets the rate, for the sorting 
+    return _peer.rate
+
+def getPrefNeighbors(): # returns an array of the current prefered neighbors sorted by rate
     out = []
     for peer in peers:
         if peer.preferred:
             out.append(peer)
+    out.sort(key=getRate)
     return out
 
 def getPrefNeighborsString():
@@ -173,6 +178,7 @@ def unchokingScheduler():
         # --- Step 1: Get interested peers ---
         interested_peers = [p for p in peers if p.connection and p.interestedfrom]
 
+        '''
         # --- Step 2: Reset preferred & optimistic flags before re-selection ---
         for p in peers:
             if p.preferred or p.optimistic:
@@ -188,10 +194,45 @@ def unchokingScheduler():
                     p.unchoked = False
                     reason = "optimistic" if was_opt else "preferred"
                     log(f"Peer {peer_id} choked Peer {p.id} ({reason}).")
-
+        '''
         # --- Step 3: Select new preferred neighbors ---
-        preferred = []
-        newpref = []
+        preferred = getPrefNeighbors()
+               
+        for p in interested_peers:
+            if p not in preferred:
+                if len(preferred) >= num_pref_neighbors: # check rates if prefered slots are full                   
+                    if p.rate >= preferred[0].rate: # check if this peer has a better rate than the slowest current prefered
+                        # break ties randomly
+                        replace = 1
+                        if p.rate == preferred[0].rate:
+                            replace = random.randint(0,1)
+                        
+                        if replace == 1:
+                            # choke the old prefered peer
+                            preferred[0].preferred = False
+                            #preferred[0].requested = -1
+                            preferred[0].connection.send("00010".encode()) # send choke msg
+                            # unchoke new pref peer
+                            p.preferred = True
+                            if p.optimistic == False:
+                                p.connection.send("00011".encode()) # send unchoke msg
+                            else:
+                                p.optimistic = False
+
+                            preferred[0] = p # replace old peer with new one in list
+                            preferred.sort(key=getRate) # resort preferred list since new peer was just put at the back
+                else: # just add the peer to prefered if there is open space in prefered list
+                    # unchoke new pref peer
+                    p.connection.send("00011".encode()) # send unchoke msg
+                    preferred.append(p)
+            
+
+        # reset all rates
+        for p in peers:
+            p.rate = 0
+
+        '''
+        newpref = []      
         if interested_peers:
             random.shuffle(interested_peers)
             preferred = interested_peers[:num_pref_neighbors]
@@ -212,7 +253,14 @@ def unchokingScheduler():
             log(f"Peer {peer_id} currently has no preferred neighbors.")
 
         # --- Step 4: Select one optimistic unchoke neighbor (not already preferred) ---
-        optimistic_peer = None
+        optimistic_peer = getOptimistic()
+        # choke old optimistic peer
+        if optimistic_peer is not None:
+            optimistic_peer.unchoked = False
+            optimistic_peer.optimistic = False
+            #optimistic_peer.requested = -1
+            optimistic_peer.connection.send("00010".encode()) # send choke msg
+
         candidates = [p for p in interested_peers if p not in preferred]
         if candidates:
             optimistic_peer = random.choice(candidates)
@@ -427,6 +475,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 local_peer.bitfield[index] = True
                 log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
                 connected_peer.outstanding_request = False
+                connected_peer.rate += 1
 
                 #broadcast 'have' to all peers
                 for peer in peers:
