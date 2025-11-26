@@ -117,7 +117,11 @@ def getRandomNeededIndex(): # returns the index of a random bit self needs
     for i in range(len(local_peer.bitfield)):
         if not local_peer.bitfield[i]:
             needed.append(i)
-    rand = random.randint(0, len(needed) - 1)
+    rand = 0
+    try:
+        rand = random.randint(0, len(needed) - 1)
+    except:
+        print(f"Peer {local_peer.id} tried to get random index when it had full file")
     return needed[rand]
     
 
@@ -591,13 +595,14 @@ def main():
     scheduler_thread = threading.Thread(target=unchokingScheduler)
     scheduler_thread.start()
     print("scheduler starting")
-
+    scheduler_thread.join()
     # Wait for shutdown signal
     while not shutdown_flag.is_set():
         time.sleep(1)
+    time.sleep(5) # wait to make sure all threads are done
 
     # Cleanup
-    log(f"Peer {peer_id} shutting down all connections.")
+    #log(f"Peer {peer_id} shutting down all connections.")
     for p in peers:
         if p.connection:
             try:
