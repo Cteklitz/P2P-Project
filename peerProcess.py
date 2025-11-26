@@ -6,6 +6,7 @@ from datetime import datetime
 import time
 import random
 import math
+import struct
 
 peers = []
 peer_id = 0
@@ -15,7 +16,7 @@ shutdown_flag = threading.Event()
 def log(message):
     now = datetime.now()
     formatted = now.strftime("%Y-%m-%d %H:%M:%S")
-    file.write(f"{formatted}: {message}\n")
+    log_file.write(f"{formatted}: {message}\n")
     print(f"{formatted}: {message}")
 
 
@@ -221,11 +222,17 @@ def unchokingScheduler():
                             # choke the old prefered peer
                             preferred[0].preferred = False
                             #preferred[0].requested = -1
-                            preferred[0].connection.send("00010".encode()) # send choke msg
+                            # send choke msg
+                            msg = struct.pack(">I", 1) 
+                            msg += struct.pack(">B", 0)
+                            p.connection.send(msg)
                             # unchoke new pref peer
                             p.preferred = True
                             if p.optimistic == False:
-                                p.connection.send("00011".encode()) # send unchoke msg
+                                # send unchoke msg
+                                msg = struct.pack(">I", 1) 
+                                msg += struct.pack(">B", 1)
+                                p.connection.send(msg)
                             else:
                                 p.optimistic = False
 
@@ -234,7 +241,11 @@ def unchokingScheduler():
                 else: # just add the peer to prefered if there is open space in prefered list
                     # unchoke new pref peer
                     p.preferred = True
-                    p.connection.send("00011".encode()) # send unchoke msg
+                    # send unchoke msg
+                    msg = struct.pack(">I", 1) 
+                    msg += struct.pack(">B", 1)
+                    p.connection.send(msg)
+
                     preferred.append(p)
             
 
@@ -271,7 +282,10 @@ def unchokingScheduler():
             optimistic_peer.unchoked = False
             optimistic_peer.optimistic = False
             #optimistic_peer.requested = -1
-            optimistic_peer.connection.send("00010".encode()) # send choke msg
+            # send choke msg
+            msg = struct.pack(">I", 1) 
+            msg += struct.pack(">B", 0)
+            p.connection.send(msg)
 
         candidates = [p for p in interested_peers if p not in preferred]
         if candidates:
@@ -279,7 +293,10 @@ def unchokingScheduler():
             optimistic_peer.optimistic = True
             optimistic_peer.unchoked = True
             try:
-                optimistic_peer.connection.send("00011".encode()) # send unchoke msg
+                # send unchoke msg
+                msg = struct.pack(">I", 1) 
+                msg += struct.pack(">B", 1)
+                p.connection.send(msg)
             except Exception as e:
                 print(f"Error sending optimistic unchoke to {optimistic_peer.id}: {e}")
             log(f"Peer {peer_id} has the optimistically unchoked neighbor {optimistic_peer.id}.")
@@ -383,14 +400,11 @@ def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
 
     # send bitfield msg
-    bitfield_string = encodeBitfield(local_peer.bitfield)
-    bitfield_msg_len = intToHex(len(bitfield_string) + 1, 4)
-    bitfield_msg = str(bitfield_msg_len)
+    bitfield_bytes = encodeBitfield(local_peer.bitfield).encode()
+    length = struct.pack(">I", 1 + len(bitfield_bytes))
+    msg = length + struct.pack(">B", 5) + bitfield_bytes
 
-    bitfield_msg += "5"
-    bitfield_msg += bitfield_string
-
-    connected_peer.connection.send(bitfield_msg.encode())
+    connected_peer.connection.send(msg)
 
     '''
     # receive bit field msg
@@ -424,28 +438,42 @@ def sending(_peer_id): # loop to send msgs to a peer
             # send request msg
             connected_peer.outstanding_request = True
             index = getRandomNeededIndex()
-            msg = "00056" + intToHex(index, 4)
+            payload = struct.pack(">I", index) # index
+            msg = struct.pack(">I", 1 + len(payload)) # length
+            msg += struct.pack(">B", 6)
+            msg += payload
             print(f"requesting: {index}")
-            s.send(msg.encode())           
+            s.send(msg)           
         elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not local_peer.has_file and not connected_peer.interested_in:
             # send interested msg
             connected_peer.interested_in = True
-            msg = "00012"
-            s.send(msg.encode())
+            msg = struct.pack(">I", 1) 
+            msg += struct.pack(">B", 2)
+            s.send(msg)
             time.sleep(1)
         elif (not checkBitField(connected_peer.bitfield) or local_peer.has_file) and connected_peer.interested_in:
             # send not intersetd msg
             connected_peer.interested_in = False
-            msg = "00013"
-            s.send(msg.encode())
+            msg = struct.pack(">I", 1)
+            msg += struct.pack(">B", 3)
+            s.send(msg)
             time.sleep(1)
 
         if connected_peer.preferred or connected_peer.optimistic:
             if connected_peer.requested != -1:
                 # send piece
                 print(f"sending: {connected_peer.requested}")
-                msg = "0005" + "7" + intToHex(connected_peer.requested, 4) # TODO: Add data to msg
-                s.send(msg.encode())
+                file.seek(connected_peer.requested * piece_size)
+                data = file.read(piece_size) # read the piece data from the file
+
+                payload = struct.pack(">B", 7)
+                payload += struct.pack(">I", connected_peer.requested) 
+                payload += data
+
+                length = struct.pack(">I", len(payload))
+                msg = length + payload
+                s.send(msg)
+
                 connected_peer.requested = -1
 
 
@@ -477,8 +505,9 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                         connected_peer.preferred = True
                         connected_peer.unchoked = True
                         connected_peer.interested_from = True
-                        msg = "00011"
-                        s.send(msg.encode())
+                        msg = struct.pack(">I", 1) 
+                        msg += struct.pack(">B", 1)
+                        s.send(msg)
                         log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
                 else:  # peer is interested but preferred neighbors is full
                     connected_peer.interested_from = True
@@ -486,11 +515,8 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 log(f"Peer {peer_id} received the 'not interested' message from {connected_peer.id}.")
                 connected_peer.interested_from = False
             elif t == 4:  # have, recieves 4-byte piece index field
-                index = -1
-                try:
-                    index = int(payload[0:4], 16)
-                except:
-                    print(f"Peer {local_peer.id} received invalid piece msg from {connected_peer.id}. Payload was: {payload}")
+                #index = int(payload[0:4], 16)
+                (index,) = struct.unpack(">I", payload[:4])
                 connected_peer.bitfield[index] = True
                 log(f"Peer {peer_id} received the 'have' message from {connected_peer.id} for the piece {index}")
 
@@ -503,17 +529,19 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 else:
                     connected_peer.interested_in = False
                 '''
-            elif t == 5:  # bitfield
-                connected_peer.bitfield = decodeBitfield(payload)
+            elif t == 5:  # bitfield               
+                connected_peer.bitfield = decodeBitfield(payload.decode())
             elif t == 6:  # request
-                connected_peer.requested = int(payload, 16)
+                (index,) = struct.unpack(">I", payload[:4])
+                connected_peer.requested = index
                 print(f"recived request: {connected_peer.requested}")
             elif t == 7:  # piece
-                index = -1
-                try:
-                    index = int(payload[0:4], 16)
-                except:
-                    print(f"Peer {local_peer.id} received invalid piece msg from {connected_peer.id}. Payload was: {payload}")
+                (index,) = struct.unpack(">I", payload[:4])
+
+                data = payload[5:] # get data from payload
+                file.seek(index * piece_size) # move write head to piece location
+                file.write(data) # write data
+
                 local_peer.bitfield[index] = True
                 log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
                 connected_peer.outstanding_request = False
@@ -523,8 +551,11 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 for peer in peers:
                     if peer.id != peer_id and peer.connection is not None:
                         try:
-                            msg = "00054" + intToHex(index, 4)
-                            peer.connection.send(msg.encode())
+                            # send have msg
+                            msg = struct.pack(">I", 5) 
+                            msg += struct.pack(">B", 4)
+                            msg += struct.pack(">I", index)
+                            peer.connection.send(msg)
                         except Exception as e:
                             print(f"Error broadcasting 'have': {e}")
 
@@ -539,27 +570,42 @@ def receiving(_peer_id): # loop to receive msgs from a peer
 
 
 def reciveMessage(socket): # recives a msg, returns a tuple of the type and payload
+    '''
     msg_len = socket.recv(4).decode() # get msg len
     length = int(msg_len, 16)
     msg = socket.recv(length).decode() # get msg
-    #print(msg)
     type = int(msg[0])
     payload = msg[1:]
     return (type,payload)
+    '''
+    msg_len_bytes = socket.recv(4)
+    (length,) = struct.unpack(">I", msg_len_bytes)
+
+    msg = b""
+    while len(msg) < length:
+        chunk = socket.recv(length - len(msg))
+        if not chunk:
+            raise ConnectionError("Connection closed while reading message")
+        msg += chunk
+
+    type = msg[0]
+    payload = msg[1:] 
+
+    return (type, payload)
 
 
 def main():    
-    global peers, peer_id, file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size, local_peer
+    global peers, peer_id, log_file, num_pref_neighbors, unchoking_interval, optimistic_unchoking_interval, file_name, file_size, piece_size, local_peer, file
     # parse config.cfg
     cfg = open("Common.cfg", "r")
     lines = cfg.readlines()
     num_pref_neighbors = int(lines[0].split(' ')[1])
     unchoking_interval = int(lines[1].split(' ')[1])
     optimistic_unchoking_interval = int(lines[2].split(' ')[1])
-    file_name = lines[3].split(' ')[1]
+    file_name = lines[3].split(' ')[1][:-1]
     file_size = int(lines[4].split(' ')[1])
     piece_size = int(lines[5].split(' ')[1])
-    cfg.close()
+    cfg.close()   
 
     # parse peers.cfg
     peers = parsePeerInfo()
@@ -572,9 +618,39 @@ def main():
         sys.exit()    
 
     peer_id = int(sys.argv[1])
-    file = open(f"log_peer_{peer_id}.log", "w")
+    log_file = open(f"log_peer_{peer_id}.log", "w")
     local_peer = getPeer(peer_id)
-    print(f"{len(local_peer.bitfield)}")
+    #print(f"{len(local_peer.bitfield)}")
+
+    # prep file
+    if not local_peer.has_file: # fill file with 0's if local peer does not have it
+        file = open(f"{peer_id}/{file_name}", "wb+")
+        file.seek(file_size - 1)
+        file.write(b"\0")
+    else:
+        file = open(f"{peer_id}/{file_name}", "rb+")
+
+    '''
+    temp = open("temp", "wb+")
+    temp.seek(file_size - 1)
+    temp.write(b"\0")
+
+    for i in range(math.ceil(file_size/piece_size)):
+        file.seek(i * piece_size)
+        data = file.read(piece_size)
+        temp.seek(i * piece_size)
+        temp.write(data)
+
+    temp.seek(0)
+    file.seek(0)
+
+    data = file.read(10 * piece_size)
+    print(data)
+
+    file.close()
+    temp.close()
+    quit()
+    '''
 
     # start listening for connections
     print(f"Starting peer {peer_id} on port {local_peer.port}")
@@ -609,10 +685,9 @@ def main():
                 p.connection.close()
             except:
                 pass
+    log_file.close()
     file.close()
     print(f"Peer {peer_id} exited cleanly.")
-
-
 
 if __name__ == "__main__":
     main()
