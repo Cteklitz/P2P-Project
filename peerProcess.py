@@ -286,7 +286,7 @@ def unchokingScheduler():
 
         # --- Step 5: Check for global completion ---
         if allPeersComplete():
-            log(f"All peers now have the complete file. Shutting down peer {peer_id}.")
+            print(f"All peers now have the complete file. Shutting down peer {peer_id}.")
             shutdown_flag.set()
             break
 
@@ -530,7 +530,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
 
                 if bitfieldHasCount(local_peer.bitfield) == int(math.ceil(file_size/piece_size)):
                     local_peer.has_file = True
-                    log(f"Peer {peer_id} has completed the file.")
+                    log(f"Peer {peer_id} has downloaded the complete file.")
                     return
                     # TODO: handle stuff for self having full file
                 # TODO: process data, write to file
