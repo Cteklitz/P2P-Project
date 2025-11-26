@@ -28,8 +28,8 @@ class Peer:
         self.connection = None
         self.bitfield = bitfield # this peers bitfield
         self.preferred = False # whether this peer is a preferred neightbor
-        self.interestedin = False  # whether the local peer is interested in this peer
-        self.interestedfrom = False  # whether this peer is interested in the local peer
+        self.interested_in = False  # whether the local peer is interested in this peer
+        self.interested_from = False  # whether this peer is interested in the local peer
         self.optimistic = False # whether this peer is the optimistically unchoked neighbor
         self.unchoked = False # whether this peer has unchoked self (is this peer sending us data)
         self.outstanding_request = False # whether there is a current request that has not been replied to
@@ -106,6 +106,12 @@ def bitfieldHasCount(bitfield): # returns the amount of pieces present in a bitf
             count += 1
     return count
 
+def checkBitfieldComplete(bitfield): # returns true if the given bitfield is complete, false otherwise
+    for bit in bitfield:
+        if not bit:
+            return False
+    return True
+
 def getRandomNeededIndex(): # returns the index of a random bit self needs
     needed = []
     for i in range(len(local_peer.bitfield)):
@@ -176,7 +182,7 @@ def unchokingScheduler():
 
     while True:
         # --- Step 1: Get interested peers ---
-        interested_peers = [p for p in peers if p.connection and p.interestedfrom]
+        interested_peers = [p for p in peers if p.connection is not None and p.interested_from]
 
         '''
         # --- Step 2: Reset preferred & optimistic flags before re-selection ---
@@ -223,6 +229,7 @@ def unchokingScheduler():
                             preferred.sort(key=getRate) # resort preferred list since new peer was just put at the back
                 else: # just add the peer to prefered if there is open space in prefered list
                     # unchoke new pref peer
+                    p.preferred = True
                     p.connection.send("00011".encode()) # send unchoke msg
                     preferred.append(p)
             
@@ -246,6 +253,7 @@ def unchokingScheduler():
                         print(f"Error sending unchoke to {p.id}: {e}")
                     log(f"Peer {peer_id} unchoked Peer {p.id} as preferred neighbor.")
                     newpref.append(p.id)
+        '''
 
         if preferred:
             log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
@@ -267,10 +275,10 @@ def unchokingScheduler():
             optimistic_peer.optimistic = True
             optimistic_peer.unchoked = True
             try:
-                optimistic_peer.connection.send("00011".encode())
+                optimistic_peer.connection.send("00011".encode()) # send unchoke msg
             except Exception as e:
                 print(f"Error sending optimistic unchoke to {optimistic_peer.id}: {e}")
-            log(f"Peer {peer_id} unchoked Peer {optimistic_peer.id} as optimistic neighbor.")
+            log(f"Peer {peer_id} has the optimistically unchoked neighbor {optimistic_peer.id}.")
 
         # --- Step 5: Check for global completion ---
         if allPeersComplete():
@@ -328,6 +336,16 @@ def connect(_peer_id):
 
     peer = getPeer(_peer_id)
     s.connect((peer.ip, peer.port))
+    '''
+    max_retrys = 10
+    for i in range(0, max_retrys):
+        try:
+            s.connect((peer.ip, peer.port))
+            i = max_retrys + 1
+        except:
+            print(f"Connection from {local_peer.id} to {_peer_id} failed. Will retry { max_retrys - i } more times.")
+            time.sleep(1)
+    '''
     handshake(s, True)
 
 
@@ -370,21 +388,24 @@ def connection(_peer_id):
 
     connected_peer.connection.send(bitfield_msg.encode())
 
+    '''
     # receive bit field msg
     t, bitfield_string = reciveMessage(connected_peer.connection)
     if t != 5:
         print(f"Error: expected msg type 5, received: {t}")
         return
     connected_peer.bitfield = decodeBitfield(bitfield_string)
+    '''
 
+    
     sending_thread = threading.Thread(target=sending, args=(_peer_id,))
     receiving_thread = threading.Thread(target=receiving, args=(_peer_id,))
-    sending_thread.start()
     receiving_thread.start()
+    sending_thread.start()  
     sending_thread.join()
     receiving_thread.join()
     
-    connected_peer.connection.close() # temporary
+    #connected_peer.connection.close() # temporary
 
 def sending(_peer_id): # loop to send msgs to a peer
     connected_peer = getPeer(_peer_id)
@@ -402,14 +423,15 @@ def sending(_peer_id): # loop to send msgs to a peer
             msg = "00056" + intToHex(index, 4)
             print(f"requesting: {index}")
             s.send(msg.encode())           
-        elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not local_peer.has_file:
+        elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not local_peer.has_file and not connected_peer.interested_in:
             # send interested msg
+            connected_peer.interested_in = True
             msg = "00012"
             s.send(msg.encode())
             time.sleep(1)
-        elif not checkBitField(connected_peer.bitfield) and connected_peer.unchoked:
+        elif (not checkBitField(connected_peer.bitfield) or local_peer.has_file) and connected_peer.interested_in:
             # send not intersetd msg
-            # TODO: Make it so this only sends once
+            connected_peer.interested_in = False
             msg = "00013"
             s.send(msg.encode())
             time.sleep(1)
@@ -438,6 +460,8 @@ def receiving(_peer_id): # loop to receive msgs from a peer
             if t == 0:  # choke
                 connected_peer.unchoked = False
                 log(f"Peer {peer_id} is choked by {connected_peer.id}.")
+                if connected_peer.outstanding_request:
+                    connected_peer.outstanding_request = False
             elif t == 1:  # unchoke
                 if not connected_peer.unchoked:
                     connected_peer.unchoked = True
@@ -448,30 +472,44 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                     if not connected_peer.preferred:
                         connected_peer.preferred = True
                         connected_peer.unchoked = True
+                        connected_peer.interested_from = True
                         msg = "00011"
                         s.send(msg.encode())
                         log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
                 else:  # peer is interested but preferred neighbors is full
-                    connected_peer.interestedfrom = True
+                    connected_peer.interested_from = True
             elif t == 3:  # not interested
                 log(f"Peer {peer_id} received the 'not interested' message from {connected_peer.id}.")
-                connected_peer.interestedfrom = False
+                connected_peer.interested_from = False
             elif t == 4:  # have, recieves 4-byte piece index field
-                index = int(payload, 16)
+                index = -1
+                try:
+                    index = int(payload[0:4], 16)
+                except:
+                    print(f"Peer {local_peer.id} received invalid piece msg from {connected_peer.id}. Payload was: {payload}")
                 connected_peer.bitfield[index] = True
                 log(f"Peer {peer_id} received the 'have' message from {connected_peer.id} for the piece {index}")
+
+                # check if this peer has the full file
+                if checkBitfieldComplete(connected_peer.bitfield):
+                    connected_peer.has_file = True
+                '''
                 if not local_peer.bitfield[index]:
-                    connected_peer.interestedin = True
+                    connected_peer.interested_in = True
                 else:
-                    connected_peer.interestedin = False
+                    connected_peer.interested_in = False
+                '''
             elif t == 5:  # bitfield
-                print(f"Local: {local_peer.id}, From: {connected_peer.id}; bitfield message, should not receive if not initial connection; {payload}")
                 connected_peer.bitfield = decodeBitfield(payload)
             elif t == 6:  # request
                 connected_peer.requested = int(payload, 16)
                 print(f"recived request: {connected_peer.requested}")
             elif t == 7:  # piece
-                index = int(payload[0:4], 16)
+                index = -1
+                try:
+                    index = int(payload[0:4], 16)
+                except:
+                    print(f"Peer {local_peer.id} received invalid piece msg from {connected_peer.id}. Payload was: {payload}")
                 local_peer.bitfield[index] = True
                 log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
                 connected_peer.outstanding_request = False
