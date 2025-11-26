@@ -7,11 +7,13 @@ import time
 import random
 import math
 import struct
+import os
 
 peers = []
 peer_id = 0
 shutdown_flag = threading.Event()
-
+file_lock = threading.Lock()
+bitfield_lock = threading.Lock()
 
 def log(message):
     now = datetime.now()
@@ -72,34 +74,23 @@ def getOptimistic(): # returns the current optimistic unchoked peer, None if the
             return peer
     return None
 
-def encodeBitfield(bitfield): # retuns a hex string represnting the input bitfield
-    binary = ""
-    for bit in bitfield:
-        if bit:
-            binary += "1"
-        else:
-            binary += "0"
-    while len(binary) % 8 != 0: # add 0's to fill last byte
-        binary += "0"
+def encodeBitfield(bitfield): # retuns hex represnting the input bitfield
+    bytes_list = []
+    for i in range(0, len(bitfield), 8):
+        byte = 0
+        for b in range(8):
+            if i + b < len(bitfield) and bitfield[i + b]:
+                byte |= (1 << (7 - b))
+        bytes_list.append(byte)
+    return bytes(bytes_list)
 
-    hex_value = hex(int(binary, 2))[2:]
-    required_hex_digits = len(binary) // 4
-    hex_string = hex_value.zfill(required_hex_digits)
-    return hex_string
-
-def decodeBitfield(string): # returns a bitfield array for input bitfield hex string
-    binary = bin(int(string, 16))[2:]
-    required_binary_digits = len(string) * 4
-    binary = binary.zfill(required_binary_digits)
-
+def decodeBitfield(payload): # returns a bitfield array for input bitfield hex
     bitfield = []
-    for i in range(len(local_peer.bitfield)):
-        if binary[i] == '1':
-            bitfield.append(True)
-        else:
-            bitfield.append(False)
-    return bitfield
-
+    for byte in payload:
+        for bit in range(8):
+            bitfield.append((byte >> (7 - bit)) & 1 == 1)
+    return bitfield[:(math.ceil(file_size/piece_size))] # trim extra bits
+    
 def bitfieldHasCount(bitfield): # returns the amount of pieces present in a bitfield
     count = 0
     for bit in bitfield:
@@ -113,17 +104,20 @@ def checkBitfieldComplete(bitfield): # returns true if the given bitfield is com
             return False
     return True
 
-def getRandomNeededIndex(): # returns the index of a random bit self needs
-    needed = []
-    for i in range(len(local_peer.bitfield)):
-        if not local_peer.bitfield[i]:
-            needed.append(i)
-    rand = 0
-    try:
-        rand = random.randint(0, len(needed) - 1)
-    except:
-        print(f"Peer {local_peer.id} tried to get random index when it had full file")
-    return needed[rand]
+def getRandomNeededIndex(connected_peer): # returns the index of a random bit self needs and connected_peer has
+    with bitfield_lock:
+        needed = []
+        for i in range(len(local_peer.bitfield)):
+            if not local_peer.bitfield[i] and connected_peer.bitfield[i]:
+                needed.append(i)
+        rand = 0
+        try:
+            rand = random.randint(0, len(needed) - 1)
+            return needed[rand]
+        except:
+            print(f"Peer {local_peer.id} tried to get random index when it had full file")
+            return -1
+    
     
 
 def checkBitField(bitfield): # returns True if the input bitfield has any pieces that self does not have, False otherwise
@@ -304,8 +298,7 @@ def unchokingScheduler():
 
         # --- Step 5: Check for global completion ---
         if allPeersComplete():
-            print(f"All peers now have the complete file. Shutting down peer {peer_id}.")
-            shutdown_flag.set()
+            print(f"All peers now have the complete file. Shutting down peer {peer_id}.")         
             break
 
         # --- Step 6: Sleep until the next interval ---
@@ -401,35 +394,26 @@ def connection(_peer_id):
     connected_peer = getPeer(_peer_id)
 
     # send bitfield msg
-    bitfield_bytes = encodeBitfield(local_peer.bitfield).encode()
-    length = struct.pack(">I", 1 + len(bitfield_bytes))
-    msg = length + struct.pack(">B", 5) + bitfield_bytes
+    bitfield_bytes = encodeBitfield(local_peer.bitfield)
+    msg = struct.pack(">I", 1 + len(bitfield_bytes))
+    msg += struct.pack(">B", 5)
+    msg += bitfield_bytes
 
     connected_peer.connection.send(msg)
-
-    '''
-    # receive bit field msg
-    t, bitfield_string = reciveMessage(connected_peer.connection)
-    if t != 5:
-        print(f"Error: expected msg type 5, received: {t}")
-        return
-    connected_peer.bitfield = decodeBitfield(bitfield_string)
-    '''
-
     
     sending_thread = threading.Thread(target=sending, args=(_peer_id,))
     receiving_thread = threading.Thread(target=receiving, args=(_peer_id,))
     receiving_thread.start()
     sending_thread.start()  
-    sending_thread.join()
-    receiving_thread.join()
+    #sending_thread.join()
+    #receiving_thread.join()
     
     #connected_peer.connection.close() # temporary
 
 def sending(_peer_id): # loop to send msgs to a peer
     connected_peer = getPeer(_peer_id)
     s = connected_peer.connection
-    s.settimeout(10.0)
+    s.settimeout(6.0)
     last_interest_state = None
 
     while not shutdown_flag.is_set(): # change to be while this peer does not have full file
@@ -438,13 +422,14 @@ def sending(_peer_id): # loop to send msgs to a peer
         if connected_peer.unchoked and not connected_peer.outstanding_request and not local_peer.has_file:
             # send request msg
             connected_peer.outstanding_request = True
-            index = getRandomNeededIndex()
-            payload = struct.pack(">I", index) # index
-            msg = struct.pack(">I", 1 + len(payload)) # length
-            msg += struct.pack(">B", 6)
-            msg += payload
-            print(f"requesting: {index}")
-            s.send(msg)           
+            index = getRandomNeededIndex(connected_peer)
+            if index != -1:
+                payload = struct.pack(">I", index) # index
+                msg = struct.pack(">I", 1 + len(payload)) # length
+                msg += struct.pack(">B", 6)
+                msg += payload
+                print(f"requesting: {index}")
+                s.send(msg)           
         elif checkBitField(connected_peer.bitfield) and not connected_peer.unchoked and not local_peer.has_file and not connected_peer.interested_in:
             # send interested msg
             connected_peer.interested_in = True
@@ -459,21 +444,22 @@ def sending(_peer_id): # loop to send msgs to a peer
             s.send(msg)
 
         if connected_peer.preferred or connected_peer.optimistic:
-            if connected_peer.requested != -1:
+            if connected_peer.requested != -1 and connected_peer.bitfield[connected_peer.requested] == False: # only send a piece if the peer requested and if that peer does not have the requested piece
                 # send piece
                 print(f"sending: {connected_peer.requested}")
-                file.seek(connected_peer.requested * piece_size)
-                data = file.read(piece_size) # read the piece data from the file
+                with file_lock: # ensure file isnt read while its being written
+                    file.seek(connected_peer.requested * piece_size)
+                    data = file.read(piece_size) # read the piece data from the file
 
-                payload = struct.pack(">B", 7) # msg type
-                payload += struct.pack(">I", connected_peer.requested)  # index
-                payload += data # data
-
-                length = struct.pack(">I", len(payload))
-                msg = length + payload
+                payload = struct.pack(">I", connected_peer.requested) + data
+                msg = struct.pack(">I", 1 + len(payload)) # length
+                msg += struct.pack(">B", 7) # type
+                msg += payload
+             
                 s.send(msg)
 
                 connected_peer.requested = -1
+    #print(f"Peer {local_peer.id} ended sending thread with {connected_peer.id}.")
 
 
 def receiving(_peer_id): # loop to receive msgs from a peer
@@ -522,74 +508,78 @@ def receiving(_peer_id): # loop to receive msgs from a peer
                 # check if this peer has the full file
                 if checkBitfieldComplete(connected_peer.bitfield):
                     connected_peer.has_file = True
-                '''
-                if not local_peer.bitfield[index]:
-                    connected_peer.interested_in = True
-                else:
-                    connected_peer.interested_in = False
-                '''
+
             elif t == 5:  # bitfield               
-                connected_peer.bitfield = decodeBitfield(payload.decode())
+                connected_peer.bitfield = decodeBitfield(payload)
             elif t == 6:  # request
                 (index,) = struct.unpack(">I", payload[:4])
                 connected_peer.requested = index
                 print(f"recived request: {connected_peer.requested}")
             elif t == 7:  # piece
-                (index,) = struct.unpack(">I", payload[:4])
+                index = struct.unpack(">I", payload[:4])[0]
 
-                data = payload[4:] # get data from payload
-                file.seek(index * piece_size) # move write head to piece location
-                file.write(data) # write data
+                total_pieces = math.ceil(file_size / piece_size)
+                #print(f"DEBUG: Received piece {index}/{total_pieces-1}, size: {len(payload[4:])}, expected: {piece_size if index < total_pieces-1 else file_size % piece_size}")
 
-                local_peer.bitfield[index] = True
-                log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
+                if local_peer.bitfield[index] == False: # only process data if this is a new piece
+                    data = bytes(payload[4:]) # get data from payload
+                    with file_lock: # only write when file is locked by this thread
+                        file.seek(index * piece_size) # move write head to piece location
+                        file.write(data) # write data
+
+                        file.seek(index * piece_size)
+                        written_data = file.read(len(data))
+                        
+                        #print(f"Written:  {written_data[:100]}...")
+
+                    local_peer.bitfield[index] = True
+                    log(f"Peer {peer_id} has downloaded the piece {index} from {connected_peer.id}. Now the number of pieces it has is {bitfieldHasCount(local_peer.bitfield)}.")
+                    #broadcast 'have' to all peers
+                    for peer in peers:
+                        if peer.id != peer_id and peer.connection is not None:
+                            try:
+                                # send have msg
+                                msg = struct.pack(">I", 5) 
+                                msg += struct.pack(">B", 4)
+                                msg += struct.pack(">I", index)
+                                peer.connection.send(msg)
+                            except Exception as e:
+                                print(f"Error broadcasting 'have': {e}")
+
+                    if bitfieldHasCount(local_peer.bitfield) == int(math.ceil(file_size/piece_size)):
+                        local_peer.has_file = True
+                        log(f"Peer {peer_id} has downloaded the complete file.")
+                        #return
+
                 connected_peer.outstanding_request = False
-                connected_peer.rate += 1
-
-                #broadcast 'have' to all peers
-                for peer in peers:
-                    if peer.id != peer_id and peer.connection is not None:
-                        try:
-                            # send have msg
-                            msg = struct.pack(">I", 5) 
-                            msg += struct.pack(">B", 4)
-                            msg += struct.pack(">I", index)
-                            peer.connection.send(msg)
-                        except Exception as e:
-                            print(f"Error broadcasting 'have': {e}")
-
-                if bitfieldHasCount(local_peer.bitfield) == int(math.ceil(file_size/piece_size)):
-                    local_peer.has_file = True
-                    log(f"Peer {peer_id} has downloaded the complete file.")
-                    return 
+                connected_peer.rate += 1               
                                                  
         except socket.timeout:
             timeouts += 1
+    #print(f"Peer {local_peer.id} ended receving thread with {connected_peer.id}.")
 
 
-def reciveMessage(socket): # recives a msg, returns a tuple of the type and payload
-    '''
-    msg_len = socket.recv(4).decode() # get msg len
-    length = int(msg_len, 16)
-    msg = socket.recv(length).decode() # get msg
-    type = int(msg[0])
-    payload = msg[1:]
-    return (type,payload)
-    '''
-    msg_len_bytes = socket.recv(4)
-    (length,) = struct.unpack(">I", msg_len_bytes)
+def reciveMessage(s): # recives a msg, returns a tuple of the type and payload
+    try:
+        msg_len_bytes = s.recv(4)
+        (length,) = struct.unpack(">I", msg_len_bytes)
 
-    msg = b""
-    while len(msg) < length:
-        chunk = socket.recv(length - len(msg))
-        if not chunk:
-            raise ConnectionError("Connection closed while reading message")
-        msg += chunk
+        msg = b""
+        while len(msg) < length:
+            chunk = s.recv(length - len(msg))
+            if not chunk:
+                raise ConnectionError("Connection closed while reading message")
+            msg += chunk
 
-    type = msg[0]
-    payload = msg[1:] 
+        type = msg[0]
+        payload = msg[1:] 
 
-    return (type, payload)
+        return (type, payload)
+    except socket.timeout:
+        return (-1, -1)
+    except:
+        #print(f"Peer {local_peer.id} encountered error receiving")
+        return (-1, -1)
 
 
 def main():    
@@ -618,7 +608,6 @@ def main():
     peer_id = int(sys.argv[1])
     log_file = open(f"log_peer_{peer_id}.log", "w")
     local_peer = getPeer(peer_id)
-    #print(f"{len(local_peer.bitfield)}")
 
     # prep file
     if not local_peer.has_file: # fill file with 0's if local peer does not have it
@@ -627,28 +616,6 @@ def main():
         file.write(b"\0")
     else:
         file = open(f"{peer_id}/{file_name}", "rb+") # open in read+ mode (opens file if present, error if not)
-
-    '''
-    temp = open("temp", "wb+")
-    temp.seek(file_size - 1)
-    temp.write(b"\0")
-
-    for i in range(math.ceil(file_size/piece_size)):
-        file.seek(i * piece_size)
-        data = file.read(piece_size)
-        temp.seek(i * piece_size)
-        temp.write(data)
-
-    temp.seek(0)
-    file.seek(0)
-
-    data = file.read(10 * piece_size)
-    print(data)
-
-    file.close()
-    temp.close()
-    quit()
-    '''
 
     # start listening for connections
     print(f"Starting peer {peer_id} on port {local_peer.port}")
@@ -671,9 +638,11 @@ def main():
     print("scheduler starting")
     scheduler_thread.join()
     # Wait for shutdown signal
-    while not shutdown_flag.is_set():
-        time.sleep(1)
-    time.sleep(5) # wait to make sure all threads are done
+    time.sleep(3)
+    shutdown_flag.set()
+    time.sleep(3) # wait to make sure all threads are done
+
+    log_file.close()
 
     # Cleanup
     #log(f"Peer {peer_id} shutting down all connections.")
@@ -683,8 +652,7 @@ def main():
                 p.connection.close()
             except:
                 pass
-    log_file.close()
-    file.close()
+    
     print(f"Peer {peer_id} exited cleanly.")
 
 if __name__ == "__main__":
