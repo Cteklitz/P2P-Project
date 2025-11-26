@@ -499,7 +499,7 @@ def main():
     listening_thread.start()
 
     # Wait until all connections are done
-    listening_thread.join()
+    #listening_thread.join()
 
     scheduler_thread = threading.Thread(target=unchokingScheduler)
     scheduler_thread.start()
