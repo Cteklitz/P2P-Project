@@ -482,7 +482,7 @@ def receiving(_peer_id): # loop to receive msgs from a peer
     connected_peer = getPeer(_peer_id)
     s = connected_peer.connection
 
-    s.settimeout(2.5)
+    s.settimeout(1)
     timeouts = 0
 
     while not shutdown_flag.is_set(): # change to end loop once all peers are connected eventually, based on timeout for testing
