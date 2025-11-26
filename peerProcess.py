@@ -276,6 +276,7 @@ def unchokingScheduler():
             log(f"Peer {peer_id} currently has no preferred neighbors.")
 
         # --- Step 4: Select one optimistic unchoke neighbor (not already preferred) ---
+        # TODO: Move Optimistic to be on its on interval (probably needs to be in its own thread)
         optimistic_peer = getOptimistic()
         # choke old optimistic peer
         if optimistic_peer is not None:
@@ -285,7 +286,7 @@ def unchokingScheduler():
             # send choke msg
             msg = struct.pack(">I", 1) 
             msg += struct.pack(">B", 0)
-            p.connection.send(msg)
+            optimistic_peer.connection.send(msg)
 
         candidates = [p for p in interested_peers if p not in preferred]
         if candidates:
@@ -296,7 +297,7 @@ def unchokingScheduler():
                 # send unchoke msg
                 msg = struct.pack(">I", 1) 
                 msg += struct.pack(">B", 1)
-                p.connection.send(msg)
+                optimistic_peer.connection.send(msg)
             except Exception as e:
                 print(f"Error sending optimistic unchoke to {optimistic_peer.id}: {e}")
             log(f"Peer {peer_id} has the optimistically unchoked neighbor {optimistic_peer.id}.")
