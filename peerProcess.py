@@ -14,6 +14,7 @@ peer_id = 0
 shutdown_flag = threading.Event()
 file_lock = threading.Lock()
 bitfield_lock = threading.Lock()
+pref_lock = threading.Lock()
 
 def log(message):
     now = datetime.now()
@@ -180,97 +181,93 @@ def unchokingScheduler():
     global peers
 
     while True:
-        # --- Step 1: Get interested peers ---
+        with pref_lock:
+            # --- Step 1: Get interested peers ---
+            interested_peers = [p for p in peers if p.connection is not None and p.interested_from]
+
+            '''
+            # --- Step 2: Reset preferred & optimistic flags before re-selection ---
+            for p in peers:
+                if p.preferred or p.optimistic:
+                    was_opt = p.optimistic
+                    p.preferred = False
+                    p.optimistic = False
+                    if p.unchoked:
+                        # send choke message
+                        try:
+                            p.connection.send("00010".encode())
+                        except Exception as e:
+                            print(f"Error sending choke to {p.id}: {e}")
+                        p.unchoked = False
+                        reason = "optimistic" if was_opt else "preferred"
+                        log(f"Peer {peer_id} choked Peer {p.id} ({reason}).")
+            '''
+            # --- Step 3: Select new preferred neighbors ---
+            preferred = getPrefNeighbors()
+                
+            for p in interested_peers:
+                if p not in preferred:
+                    if len(preferred) >= num_pref_neighbors: # check rates if prefered slots are full                   
+                        if p.rate >= preferred[0].rate: # check if this peer has a better rate than the slowest current prefered
+                            # break ties randomly
+                            replace = 1
+                            if p.rate == preferred[0].rate:
+                                replace = random.randint(0,1)
+                            
+                            if replace == 1:
+                                # choke the old prefered peer
+                                preferred[0].preferred = False
+                                #preferred[0].requested = -1
+                                # send choke msg
+                                msg = struct.pack(">I", 1) 
+                                msg += struct.pack(">B", 0)
+                                p.connection.send(msg)
+                                # unchoke new pref peer
+                                p.preferred = True
+                                if p.optimistic == False:
+                                    # send unchoke msg
+                                    msg = struct.pack(">I", 1) 
+                                    msg += struct.pack(">B", 1)
+                                    p.connection.send(msg)
+                                else:
+                                    p.optimistic = False
+
+                                preferred[0] = p # replace old peer with new one in list
+                                preferred.sort(key=getRate) # resort preferred list since new peer was just put at the back
+                    else: # just add the peer to prefered if there is open space in prefered list
+                        # unchoke new pref peer
+                        p.preferred = True
+                        # send unchoke msg
+                        msg = struct.pack(">I", 1) 
+                        msg += struct.pack(">B", 1)
+                        p.connection.send(msg)
+
+                        preferred.append(p)
+                
+
+            # reset all rates
+            for p in peers:
+                p.rate = 0
+
+            if preferred:
+                log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
+            else:
+                log(f"Peer {peer_id} currently has no preferred neighbors.")
+
+            # --- Step 5: Check for global completion ---
+            if allPeersComplete():
+                print(f"All peers now have the complete file. Shutting down peer {peer_id}.")         
+                break
+
+        # --- Step 6: Sleep until the next interval ---
+        time.sleep(unchoking_interval)
+
+def optimisticScheduler():
+    global peers
+    while not shutdown_flag.is_set():
+        #with pref_lock:
         interested_peers = [p for p in peers if p.connection is not None and p.interested_from]
 
-        '''
-        # --- Step 2: Reset preferred & optimistic flags before re-selection ---
-        for p in peers:
-            if p.preferred or p.optimistic:
-                was_opt = p.optimistic
-                p.preferred = False
-                p.optimistic = False
-                if p.unchoked:
-                    # send choke message
-                    try:
-                        p.connection.send("00010".encode())
-                    except Exception as e:
-                        print(f"Error sending choke to {p.id}: {e}")
-                    p.unchoked = False
-                    reason = "optimistic" if was_opt else "preferred"
-                    log(f"Peer {peer_id} choked Peer {p.id} ({reason}).")
-        '''
-        # --- Step 3: Select new preferred neighbors ---
-        preferred = getPrefNeighbors()
-               
-        for p in interested_peers:
-            if p not in preferred:
-                if len(preferred) >= num_pref_neighbors: # check rates if prefered slots are full                   
-                    if p.rate >= preferred[0].rate: # check if this peer has a better rate than the slowest current prefered
-                        # break ties randomly
-                        replace = 1
-                        if p.rate == preferred[0].rate:
-                            replace = random.randint(0,1)
-                        
-                        if replace == 1:
-                            # choke the old prefered peer
-                            preferred[0].preferred = False
-                            #preferred[0].requested = -1
-                            # send choke msg
-                            msg = struct.pack(">I", 1) 
-                            msg += struct.pack(">B", 0)
-                            p.connection.send(msg)
-                            # unchoke new pref peer
-                            p.preferred = True
-                            if p.optimistic == False:
-                                # send unchoke msg
-                                msg = struct.pack(">I", 1) 
-                                msg += struct.pack(">B", 1)
-                                p.connection.send(msg)
-                            else:
-                                p.optimistic = False
-
-                            preferred[0] = p # replace old peer with new one in list
-                            preferred.sort(key=getRate) # resort preferred list since new peer was just put at the back
-                else: # just add the peer to prefered if there is open space in prefered list
-                    # unchoke new pref peer
-                    p.preferred = True
-                    # send unchoke msg
-                    msg = struct.pack(">I", 1) 
-                    msg += struct.pack(">B", 1)
-                    p.connection.send(msg)
-
-                    preferred.append(p)
-            
-
-        # reset all rates
-        for p in peers:
-            p.rate = 0
-
-        '''
-        newpref = []      
-        if interested_peers:
-            random.shuffle(interested_peers)
-            preferred = interested_peers[:num_pref_neighbors]
-            for p in preferred:
-                if len(newpref) < num_pref_neighbors:
-                    p.preferred = True
-                    p.unchoked = True
-                    try:
-                        p.connection.send("00011".encode())  # unchoke
-                    except Exception as e:
-                        print(f"Error sending unchoke to {p.id}: {e}")
-                    log(f"Peer {peer_id} unchoked Peer {p.id} as preferred neighbor.")
-                    newpref.append(p.id)
-        '''
-
-        if preferred:
-            log(f"Peer {peer_id} has the preferred neighbors {getPrefNeighborsString()}.")
-        else:
-            log(f"Peer {peer_id} currently has no preferred neighbors.")
-
-        # --- Step 4: Select one optimistic unchoke neighbor (not already preferred) ---
-        # TODO: Move Optimistic to be on its on interval (probably needs to be in its own thread)
         optimistic_peer = getOptimistic()
         # choke old optimistic peer
         if optimistic_peer is not None:
@@ -281,6 +278,8 @@ def unchokingScheduler():
             msg = struct.pack(">I", 1) 
             msg += struct.pack(">B", 0)
             optimistic_peer.connection.send(msg)
+
+        preferred = getPrefNeighbors()
 
         candidates = [p for p in interested_peers if p not in preferred]
         if candidates:
@@ -296,14 +295,7 @@ def unchokingScheduler():
                 print(f"Error sending optimistic unchoke to {optimistic_peer.id}: {e}")
             log(f"Peer {peer_id} has the optimistically unchoked neighbor {optimistic_peer.id}.")
 
-        # --- Step 5: Check for global completion ---
-        if allPeersComplete():
-            print(f"All peers now have the complete file. Shutting down peer {peer_id}.")         
-            break
-
-        # --- Step 6: Sleep until the next interval ---
-        time.sleep(unchoking_interval)
-
+        time.sleep(optimistic_unchoking_interval)
 
 
 def allPeersComplete():
@@ -635,6 +627,8 @@ def main():
 
     scheduler_thread = threading.Thread(target=unchokingScheduler)
     scheduler_thread.start()
+    optimistic_thread = threading.Thread(target=optimisticScheduler)
+    optimistic_thread.start()
     print("scheduler starting")
     scheduler_thread.join()
     # Wait for shutdown signal
