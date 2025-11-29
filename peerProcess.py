@@ -116,7 +116,7 @@ def getRandomNeededIndex(connected_peer): # returns the index of a random bit se
             rand = random.randint(0, len(needed) - 1)
             return needed[rand]
         except:
-            print(f"Peer {local_peer.id} tried to get random index when it had full file")
+            #print(f"Peer {local_peer.id} tried to get random index when it had full file")
             return -1
     
     
